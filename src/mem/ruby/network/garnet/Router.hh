@@ -113,6 +113,29 @@ class Router : public BasicRouter, public Consumer
 
     int getBitWidth() { return m_bit_width; }
 
+    // BOFAR: Read the current BOC (used by neighbors)
+    int get_BOC(int outport) { return m_port_BOC[outport]; }
+
+    // // BOFAR Helper to get total outports
+    // int get_num_outports() { return m_output_unit.size(); }
+    
+    // BOFAR: Add CSB to the counter (capped at 8-bits / 255)
+    void update_BOC(int outport, int csb) {
+        m_port_BOC[outport] += csb;
+        if (m_port_BOC[outport] > 255) m_port_BOC[outport] = 255;
+    }
+
+    // --- FON & NOP Helpers ---
+    int get_fluidity(int outport) { return m_flits_departed[outport]; }
+    void increment_fluidity(int outport) { m_flits_departed[outport]++; }
+    
+    // // NOP needs to ask a neighbor for its free credits
+    // int get_neighbor_free_credits(PortDirection dirn, int vnet) {
+    //     if (m_routing_unit->getFreeCredits(dirn, vnet) > 0)
+    //         return m_routing_unit->getFreeCredits(dirn, vnet);
+    //     return 0;
+    // }
+
     PortDirection getOutportDirection(int outport);
     PortDirection getInportDirection(int inport);
 
@@ -147,6 +170,15 @@ class Router : public BasicRouter, public Consumer
     uint32_t m_virtual_networks, m_vc_per_vnet, m_num_vcs;
     uint32_t m_bit_width;
     GarnetNetwork *m_network_ptr;
+
+    // BOFAR Variables
+    std::vector<int> m_port_BOC;
+    Tick m_last_boc_reset_time;
+    const Cycles BOC_REFRESH_INTERVAL = Cycles(128);
+
+    // --- FON Variables ---
+    std::vector<int> m_flits_departed;
+    Tick m_last_fluidity_reset_time;
 
     RoutingUnit routingUnit;
     SwitchAllocator switchAllocator;

@@ -38,3 +38,15 @@ configs/dram/lowp_sweep.cfg
 .vscode
 typings
 .DS_Store
+build/
+m5out/
+*.pyc
+__pycache__/
+*.o
+*.a
+*.so
+.vscode/
+**/nohup.out
+*.log
+m5out_debug/
+mcpat/

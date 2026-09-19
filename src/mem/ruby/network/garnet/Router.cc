@@ -66,13 +66,75 @@ Router::init()
 
     switchAllocator.init();
     crossbarSwitch.init();
+
+    // BOFAR: Initialize counters
+    m_last_boc_reset_time = curTick();
+    m_port_BOC.resize(m_output_unit.size(), 0);
+
+    // FON Initialization
+    m_last_fluidity_reset_time = curTick();
+    m_flits_departed.resize(m_output_unit.size(), 0);
 }
 
 void
 Router::wakeup()
 {
+
+    // Tick current_time = curTick();
+    // Tick refresh_duration = clockEdge(BOC_REFRESH_INTERVAL) - clockEdge(Cycles(0));
+
+    // if ((current_time - m_last_boc_reset_time) >= refresh_duration) {
+    //     // Clear BOFAR Counters
+    //     for (int i = 0; i < m_port_BOC.size(); i++) {
+    //         m_port_BOC[i] = 0;
+    //     }
+    //     // Clear FON Counters
+    //     for (int i = 0; i < m_flits_departed.size(); i++) {
+    //         m_flits_departed[i] = 0;
+    //     }
+    //     m_last_boc_reset_time = current_time;
+    //     m_last_fluidity_reset_time = current_time;
+    // }
+
+    // DPRINTF(RubyNetwork, "Router %d woke up\n", m_id);
+    // assert(clockEdge() == curTick());
+
+    // // check for incoming flits
+    // for (int inport = 0; inport < m_input_unit.size(); inport++) {
+    //     m_input_unit[inport]->wakeup();
+    // }
+
     DPRINTF(RubyNetwork, "Router %d woke up\n", m_id);
     assert(clockEdge() == curTick());
+
+    // Convert current absolute time to simulation cycles
+    uint64_t current_cycle = curTick() / clockPeriod();
+
+    // ---------------------------------------------------------
+    // 1. TRACKER Update: 16-Cycle EWMA (ICCAD 2012)
+    // ---------------------------------------------------------
+    if (current_cycle % 16 == 0) {
+        for (int i = 0; i < m_output_unit.size(); i++) {
+            // This calls the math function we added to OutputUnit.hh
+            m_output_unit[i]->update_cfc_ewma();
+        }
+    }
+
+    // ---------------------------------------------------------
+    // 2. BOFAR & FON Update: 128-Cycle Reset (ICCAD 2011)
+    // ---------------------------------------------------------
+    if (current_cycle > 0 && current_cycle % 128 == 0) {
+        // Clear BOFAR Counters
+        for (int i = 0; i < m_port_BOC.size(); i++) {
+            m_port_BOC[i] = 0;
+        }
+        // Clear FON Counters
+        for (int i = 0; i < m_flits_departed.size(); i++) {
+            m_flits_departed[i] = 0;
+        }
+        m_last_boc_reset_time = curTick();
+        m_last_fluidity_reset_time = curTick();
+    }
 
     // check for incoming flits
     for (int inport = 0; inport < m_input_unit.size(); inport++) {

@@ -52,6 +52,7 @@ enum TrafficType {BIT_COMPLEMENT_ = 0,
                   TORNADO_ = 5,
                   TRANSPOSE_ = 6,
                   UNIFORM_RANDOM_ = 7,
+                  BURSTY_ = 8,
                   NUM_TRAFFIC_PATTERNS_};
 
 class Packet;
@@ -112,6 +113,7 @@ class GarnetSyntheticTraffic : public ClockedObject
     PacketPtr retryPkt;
     unsigned size;
     int id;
+    int m_burst_length_remaining;
 
     std::map<std::string, TrafficType> trafficStringToEnum;
 
@@ -125,6 +127,8 @@ class GarnetSyntheticTraffic : public ClockedObject
     int numPacketsSent;
     int singleSender;
     int singleDest;
+
+    const bool isTrojan;
 
     std::string trafficType; // string
     TrafficType traffic; // enum from string

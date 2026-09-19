@@ -59,8 +59,21 @@ parser.add_argument(
         "bit_rotation",
         "neighbor",
         "shuffle",
-        "transpose",
+        "transpose","bursty"
     ],
+)
+
+# TROJAN COMMAND LINE ARGUMENTS
+parser.add_argument(
+    "--trojan",
+    action="store_true",
+    help="Randomly select one node to act as a Bursty Trojan.",
+)
+parser.add_argument(
+    "--trojan-id",
+    type=int,
+    default=-1,
+    help="Specify the exact node ID to act as a Trojan. Overrides --trojan.",
 )
 
 parser.add_argument(
@@ -120,12 +133,24 @@ parser.add_argument(
                         Set to -1 to inject randomly in all vnets.",
 )
 
+
 #
 # Add the ruby specific and protocol specific options
 #
 Ruby.define_options(parser)
 
 args = parser.parse_args()
+
+import random
+active_trojan_id = -1 
+
+if args.trojan_id >= 0:
+    active_trojan_id = args.trojan_id
+    print(f"[*] SECURITY ALERT: Node {active_trojan_id} manually locked as Bursty Trojan.")
+elif args.trojan:
+    active_trojan_id = random.randint(0, args.num_cpus - 1)
+    print(f"[*] SECURITY ALERT: Node {active_trojan_id} randomly infected as Bursty Trojan.")
+
 
 cpus = [
     GarnetSyntheticTraffic(
@@ -138,6 +163,7 @@ cpus = [
         inj_vnet=args.inj_vnet,
         precision=args.precision,
         num_dest=args.num_dirs,
+        is_trojan=(i == active_trojan_id)
     )
     for i in range(args.num_cpus)
 ]

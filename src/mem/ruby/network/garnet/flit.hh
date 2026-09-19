@@ -82,6 +82,10 @@ class flit
     void increment_hops() { m_route.hops_traversed++; }
     virtual void print(std::ostream& out) const;
 
+    // BOFAR Timestamping
+    void set_router_arrival_time(Tick time) { m_router_arrival_time = time; }
+    Tick get_router_arrival_time() const { return m_router_arrival_time; }
+
     bool
     is_stage(flit_stage stage, Tick time)
     {
@@ -129,6 +133,7 @@ class flit
     int m_outport;
     Tick src_delay;
     std::pair<flit_stage, Tick> m_stage;
+    Tick m_router_arrival_time;
 };
 
 inline std::ostream&

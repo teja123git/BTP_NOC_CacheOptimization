@@ -56,7 +56,10 @@ if error:
 print("Compiled dsent")
 os.chdir("../../../")
 sys.path.append("build/ext/dsent")
+
+import importlib
 import dsent
+importlib.reload(dsent)
 
 
 # Parse gem5 config.ini file for the configuration parameters related to
@@ -71,7 +74,7 @@ def parseConfig(config_file):
         print(("ERROR: Ruby network not found in '", config_file))
         sys.exit(1)
 
-    if config.get("system.ruby.network", "type") != "GarnetNetwork_d":
+    if config.get("system.ruby.network", "type") != "GarnetNetwork":
         print(("ERROR: Garnet network not used in '", config_file))
         sys.exit(1)
 
@@ -139,8 +142,8 @@ def computeRouterPowerAndArea(
 
     for int_link in int_links:
         if (
-            config.get(int_link, "node_a") == router
-            or config.get(int_link, "node_b") == router
+            config.get(int_link, "src_node") == router
+            or config.get(int_link, "dst_node") == router
         ):
             num_ports += 1
 
@@ -162,7 +165,7 @@ def computeRouterPowerAndArea(
 
 
 ## Compute the power consumed by the given link
-def computeLinkPower(link, stats_file, config, sim_seconds):
+def computeLinkPower(link, stats_file, config, simSeconds):
     frequency = getClock(link + ".nls0", config)
     power = dsent.computeLinkPower(frequency)
     print(f"{link}.nls0 Power: ", power)
@@ -196,10 +199,11 @@ def parseStats(
         exit(-1)
 
     # Now parse the stats
-    pattern = "sim_seconds"
-    lines = string.split(
-        subprocess.check_output(["grep", pattern, stats_file]), "\n", -1
-    )
+    pattern = "simSeconds"
+    # lines = string.split(
+    #     subprocess.check_output(["grep", pattern, stats_file]), "\n", -1
+    # )
+    lines = subprocess.check_output(["grep", pattern, stats_file]).decode('utf-8').split('\n')
     assert len(lines) >= 1
 
     ## Assume that the first line is the one required

@@ -218,6 +218,16 @@ SwitchAllocator::arbitrate_outports()
 
                 // flit ready for Switch Traversal
                 t_flit->advance_stage(ST_, curTick());
+
+                // FON: Increment departure count
+                m_router->increment_fluidity(outport);
+
+                // --- BOFAR: Calculate CSB and update the output port's BOC ---
+                Tick csb_ticks = curTick() - t_flit->get_router_arrival_time();
+                int csb_cycles = csb_ticks / m_router->clockPeriod();
+                m_router->update_BOC(outport, csb_cycles);
+                // -------------------------------------------------------------
+
                 m_router->grant_switch(inport, t_flit);
                 m_output_arbiter_activity++;
 

@@ -40,5 +40,7 @@
             "label": "[gem5] All open Issues",
             "query": "state:open repo:${owner}/${repository} sort:updated-desc"
         }
-    ]
+    ],
+    "cmake.sourceDirectory": "/home/teja/gem5/ext/dramsys",
+    "git.ignoreLimitWarning": true
 }

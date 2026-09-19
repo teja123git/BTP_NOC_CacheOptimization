@@ -82,6 +82,35 @@ class RoutingUnit
     // of vnets or if the vector supports all vnets.
     bool supportsVnet(int vnet, std::vector<int> sVnets);
 
+    // Routing for ODD-EVEN
+    int outportComputeODD_EVEN(RouteInfo route,
+                         int inport,
+                         PortDirection inport_dirn);
+    
+    // Routing for DyXY
+    int outportComputeDyXY(RouteInfo route,
+                         int inport,
+                         PortDirection inport_dirn);
+    
+    int getFreeCredits(PortDirection dirn, int vnet);
+
+    int outportComputeBOFAR(RouteInfo route, int inport, PortDirection inport_dirn);
+    int getDownstreamBOCSum(PortDirection dirn);
+
+    int outportComputeFVC(RouteInfo route, int inport, PortDirection inport_dirn);
+    int outportComputeFON(RouteInfo route, int inport, PortDirection inport_dirn);
+    int outportComputeNOP(RouteInfo route, int inport, PortDirection inport_dirn);
+    
+    int getDownstreamFluiditySum(PortDirection dirn);
+    int getNOPScore(PortDirection dirn, RouteInfo route);
+    // Add these alongside the other outportCompute functions:
+    int outportComputeTRACKER(RouteInfo route,
+                              int inport,
+                              PortDirection inport_dirn);
+
+    // Add the helper function to fetch the Cumulative Flit Count
+    double getDownstreamCFC(PortDirection dirn);
+
 
   private:
     Router *m_router;
@@ -95,6 +124,36 @@ class RoutingUnit
     std::map<int, PortDirection> m_inports_idx2dirn;
     std::map<int, PortDirection> m_outports_idx2dirn;
     std::map<PortDirection, int> m_outports_dirn2idx;
+
+    // --- R2D2: REACTIVE REROUTING REGISTERS ---
+    int m_trojan_id; 
+    bool m_r2d2_initialized;
+    std::map<PortDirection, int> m_r2d2_penalty_table; 
+    
+    void calculateR2D2Penalties();
+    int outportComputeR2D2(RouteInfo route, int inport, PortDirection inport_dirn);
+
+
+    
+  // MPAD SENSOR REGISTERS 
+    bool m_alarm_triggered;
+    
+    // Proof 1: Dest Entropy
+    int m_last_dest;
+    int m_dest_entropy_count;
+    
+    // Window Tracking (For Entropy Reset)
+    gem5::Tick m_window_start;
+    int m_packets_in_window;
+
+    // Proof 3: Consecutive Burst Tracker
+    gem5::Tick m_last_injection_cycle;
+    int m_consecutive_injections;
+
+
+    // The MPAD Engine
+    void runMPADDetection(RouteInfo route, PortDirection inport_dirn);
+    // ------------------------------------------
 };
 
 } // namespace garnet

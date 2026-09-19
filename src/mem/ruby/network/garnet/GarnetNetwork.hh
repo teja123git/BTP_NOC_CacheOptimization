@@ -148,6 +148,13 @@ class GarnetNetwork : public Network
         m_flit_queueing_latency[vnet] += latency;
     }
 
+    void set_detected_trojan_id(int id) { m_detected_trojan_id = id; }
+    int get_detected_trojan_id() const { return m_detected_trojan_id; }
+
+    
+    // --- BOFAR Helper ---
+    Router* get_router(int id) { return (Router*)m_routers[id]; }
+
     void
     increment_total_hops(int hops)
     {
@@ -214,6 +221,8 @@ class GarnetNetwork : public Network
     std::vector<CreditLink *> m_creditlinks; // All credit links in the network
     std::vector<NetworkInterface *> m_nis;   // All NI's in Network
     int m_next_packet_id; // static vairable for packet id allocation
+
+    int m_detected_trojan_id;
 };
 
 inline std::ostream&

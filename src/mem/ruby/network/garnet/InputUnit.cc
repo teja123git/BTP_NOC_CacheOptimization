@@ -80,6 +80,8 @@ InputUnit::wakeup()
     if (m_in_link->isReady(curTick())) {
 
         t_flit = m_in_link->consumeLink();
+        // BOFAR: Stamp the exact Tick the flit enters this router's buffer
+        t_flit->set_router_arrival_time(curTick());
         DPRINTF(RubyNetwork, "Router[%d] Consuming:%s Width: %d Flit:%s\n",
         m_router->get_id(), m_in_link->name(),
         m_router->getBitWidth(), *t_flit);

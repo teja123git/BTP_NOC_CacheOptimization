@@ -42,6 +42,7 @@
 #include "mem/ruby/network/garnet/flitBuffer.hh"
 #include "mem/ruby/slicc_interface/Message.hh"
 #include "mem/ruby/system/RubySystem.hh"
+#include <cstdlib>
 
 namespace gem5
 {
@@ -385,6 +386,13 @@ NetworkInterface::flitisizeMessage(MsgPtr msg_ptr, int vnet)
     assert(oPort);
     int num_flits = (int)divCeil((float) m_net_ptr->MessageSizeType_to_int(
         net_msg_ptr->getMessageSize()), (float)oPort->bitWidth());
+    
+    // If the protocol generated a bulky data packet (>1 flit), 
+    // randomize its length to be 2, 3, or 4 flits.
+    if (num_flits > 1) {
+        num_flits = (std::rand() % 3) + 2; 
+    }
+    // ------------------------------------
 
     DPRINTF(RubyNetwork, "Message Size:%d vnet:%d bitWidth:%d\n",
         m_net_ptr->MessageSizeType_to_int(net_msg_ptr->getMessageSize()),

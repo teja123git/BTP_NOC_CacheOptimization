@@ -85,15 +85,18 @@ GarnetSyntheticTraffic::GarnetSyntheticTraffic(const Params &p)
       numPacketsSent(0),
       singleSender(p.single_sender),
       singleDest(p.single_dest),
+      isTrojan(p.is_trojan),
       trafficType(p.traffic_type),
       injRate(p.inj_rate),
       injVnet(p.inj_vnet),
       precision(p.precision),
       responseLimit(p.response_limit),
       requestorId(p.system->getRequestorId(this))
+    
 {
     // set up counters
     noResponseCycles = 0;
+    m_burst_length_remaining = 0;
     schedule(tickEvent, 0);
 
     initTrafficType();
@@ -150,14 +153,69 @@ GarnetSyntheticTraffic::tick()
     // (injection rate's range depends on precision)
     // - generate a random number between 0 and 10^precision
     // - send pkt if this number is < injRate*(10^precision)
-    bool sendAllowedThisCycle;
-    double injRange = pow((double) 10, (double) precision);
-    unsigned trySending = rng->random<unsigned>(0, (int) injRange);
-    if (trySending < injRate*injRange)
-        sendAllowedThisCycle = true;
-    else
-        sendAllowedThisCycle = false;
+    bool sendAllowedThisCycle = false;
 
+    if (traffic == BURSTY_) {
+        // As per BOFAR paper: 4 nodes inject a 20-flit burst once every 20 cycles.
+        // We designate the 4 corner nodes of a 4x4 mesh (0, 3, 12, 15) as the bursty nodes.
+        bool is_bursty_node = (id == 0 || id == 3 || id == 12 || id == 15);
+
+        if (is_bursty_node) {
+            // // Check if it is the start of a new 20-cycle window
+            // if ((curTick() / clockPeriod()) % 20 == 0) {
+            //     m_burst_length_remaining = 20; 
+            // }
+
+            // if (m_burst_length_remaining > 0) {
+            //     sendAllowedThisCycle = true;
+            //     m_burst_length_remaining--;
+            // }
+            int burst_size = 20;
+            
+            // Calculate total period dynamically based on injection rate
+            // e.g., if injRate = 0.10, period = 200 cycles (20 ON, 180 OFF)
+            int period = (int)(burst_size / injRate);
+            if (period < burst_size) period = burst_size; 
+
+            int current_cycle = curTick() / clockPeriod();
+            
+            // Allow injection only during the active window of the calculated period
+            if (current_cycle % period < burst_size) {
+                sendAllowedThisCycle = true;
+            }
+        } else {
+            // The other 12 nodes generate standard background traffic based on injRate
+            double injRange = pow((double) 10, (double) precision);
+            unsigned trySending = rng->random<unsigned>(0, (int) injRange);
+            if (trySending < injRate*injRange) {
+                sendAllowedThisCycle = true;
+            }
+            // // Keep background nodes completely silent to isolate cross-traffic interference
+            // sendAllowedThisCycle = false;
+        }
+    } else {
+        // Standard injection for uniform, shuffle, transpose, etc.
+        double injRange = pow((double) 10, (double) precision);
+        unsigned trySending = rng->random<unsigned>(0, (int) injRange);
+
+        // --- BURSTY TROJAN LOGIC ---
+        if (isTrojan) {
+            uint64_t current_cycle = curTick() / clockPeriod();
+            uint64_t burst_window = 40;  // High-intensity flood period (cycles)
+            uint64_t sleep_window = 40; // Silent cooling period (cycles)
+            uint64_t period = burst_window + sleep_window;
+
+            if (current_cycle % period < burst_window) {
+                sendAllowedThisCycle = true; // Burst mode: 100% injection
+            } 
+        } else if (trySending < injRate*injRange) {
+            // Normal background traffic for non-infected nodes
+            sendAllowedThisCycle = true;
+        }
+        // if (trySending < injRate*injRange) {
+        //     sendAllowedThisCycle = true;
+        // }
+    }
     // always generatePkt unless fixedPkts or singleSender is enabled
     if (sendAllowedThisCycle) {
         bool senderEnable = true;
@@ -196,7 +254,13 @@ GarnetSyntheticTraffic::generatePkt()
     if (singleDest >= 0)
     {
         destination = singleDest;
-    } else if (traffic == UNIFORM_RANDOM_) {
+    }
+    // else if (isTrojan) {
+    //     // No matter what background traffic is running (Uniform, Transpose, Shuffle),
+    //     // the Trojan ALWAYS executes the Adversarial Shift attack.
+    //     destination = num_destinations - id - 1;
+    // } 
+    else if (traffic == UNIFORM_RANDOM_) {
         destination = rng->random<unsigned>(0, num_destinations - 1);
     } else if (traffic == BIT_COMPLEMENT_) {
         dest_x = radix - src_x - 1;
@@ -235,10 +299,17 @@ GarnetSyntheticTraffic::generatePkt()
             destination = dest_y*radix + dest_x;
     } else if (traffic == TORNADO_) {
         dest_x = (src_x + (int) ceil(radix/2) - 1) % radix;
+        // // Force a 2-hop shift by removing the "- 1" so packets cross the center links
+        // dest_x = (src_x + (int) ceil((double)radix / 2.0)) % radix;
         dest_y = src_y;
         destination = dest_y*radix + dest_x;
     }
-    else {
+    else if (traffic == BURSTY_) {
+        // destination = rng->random<unsigned>(0, num_destinations - 1);
+        // Force strict cross-chip diagonal traffic so heavy trains collide in the center
+        // Node 0 -> 15, Node 3 -> 12, Node 12 -> 3, Node 15 -> 0
+        destination = num_destinations - id - 1;
+    } else {
         fatal("Unknown Traffic Type: %s!\n", traffic);
     }
 
@@ -281,12 +352,30 @@ GarnetSyntheticTraffic::generatePkt()
     // Inject in specific Vnet
     // Vnet 0 and 1 are for control packets (1-flit)
     // Vnet 2 is for data packets (5-flit)
-    int injReqType = injVnet;
+    // int injReqType = injVnet;
 
-    if (injReqType < 0 || injReqType > 2)
-    {
-        // randomly inject in any vnet
-        injReqType = rng->random(0, 2);
+    // if (injReqType < 0 || injReqType > 2)
+    // {
+    //     // randomly inject in any vnet
+    //     injReqType = rng->random(0, 2);
+    // }
+
+    // ICCAD 2012: 60% 1-flit packets, 40% up to 4-flit packets
+    int injReqType;
+    double packet_type_prob = rng->random<double>();
+    
+    if (packet_type_prob < 0.60) {
+        // 60% chance: Control packets (1-flit on Vnet 0 or 1)
+        injReqType = rng->random<int>(0, 1); 
+        access_size = 0; // Forces exactly 1 flit
+    } else {
+        // 40% chance: Data packets (Up to 4-flits total on Vnet 2)
+        injReqType = 2; 
+        
+        // In Garnet, 1 flit is usually 16 bytes. 
+        // 1 head flit + (1 to 3 data flits) = 2 to 4 flits total
+        int payload_flits = rng->random<int>(1, 3);
+        access_size = payload_flits * 16; 
     }
 
     if (injReqType == 0) {
@@ -335,6 +424,7 @@ GarnetSyntheticTraffic::initTrafficType()
     trafficStringToEnum["tornado"] = TORNADO_;
     trafficStringToEnum["transpose"] = TRANSPOSE_;
     trafficStringToEnum["uniform_random"] = UNIFORM_RANDOM_;
+    trafficStringToEnum["bursty"] = BURSTY_;
 }
 
 void

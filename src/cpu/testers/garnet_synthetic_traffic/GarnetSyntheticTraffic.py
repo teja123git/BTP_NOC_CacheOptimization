@@ -40,6 +40,9 @@ class GarnetSyntheticTraffic(ClockedObject):
     num_dest = Param.Int(1, "Number of Destinations")
     memory_size = Param.Int(65536, "memory size")
     sim_cycles = Param.Int(1000, "Number of simulation cycles")
+
+    is_trojan = Param.Bool(False, "Flag to turn this node into a DoS Trojan")
+    
     num_packets_max = Param.Int(
         -1,
         "Max number of packets to send. \
@@ -69,7 +72,7 @@ class GarnetSyntheticTraffic(ClockedObject):
                               after decimal point",
     )
     response_limit = Param.Cycles(
-        5000000,
+        500000000,
         "Cycles before exiting \
                                             due to lack of progress",
     )

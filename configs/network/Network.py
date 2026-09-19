@@ -172,6 +172,9 @@ def init_network(options, network, InterfaceClass):
         network.ni_flit_size = options.link_width_bits / 8
         network.routing_algorithm = options.routing_algorithm
         network.garnet_deadlock_threshold = options.garnet_deadlock_threshold
+       # Force VC buffer depths to exactly 3 flits globally across the NoC
+        network.buffers_per_data_vc = 3
+        network.buffers_per_ctrl_vc = 3
 
         # Create Bridges and connect them to the corresponding links
         for intLink in network.int_links:

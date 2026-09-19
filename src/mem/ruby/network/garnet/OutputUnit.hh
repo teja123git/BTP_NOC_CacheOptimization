@@ -98,6 +98,20 @@ class OutputUnit : public Consumer
 
     void insert_flit(flit *t_flit);
 
+    double m_cfc_smoothed = 0.0;
+    int m_flits_this_interval = 0;
+
+    // Call this whenever a flit is granted passage
+    void increment_cfc() { m_flits_this_interval++; }
+    
+    // As per ICCAD 2012: CFC_new = (0.25 * Current_Count) + (0.75 * CFC_old)
+    void update_cfc_ewma() {
+        m_cfc_smoothed = (0.25 * m_flits_this_interval) + (0.75 * m_cfc_smoothed);
+        m_flits_this_interval = 0; 
+    }
+    
+    double get_cfc() { return m_cfc_smoothed; }
+
     inline int
     getVcsPerVnet()
     {
