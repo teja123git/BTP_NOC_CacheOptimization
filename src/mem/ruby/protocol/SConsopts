@@ -30,7 +30,7 @@ import os
 
 Import('*')
 
-main.Append(PROTOCOL_DIRS=[Dir('.')])
+main.Append(PROTOCOL_DIRS=[Dir('.'), Dir('modified_MOESI')])
 
 protocol_base = Dir('.')
 Export('protocol_base')

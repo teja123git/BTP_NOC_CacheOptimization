@@ -46,6 +46,9 @@ config RUBY_PROTOCOL_MI_example
 config RUBY_PROTOCOL_MOESI_CMP_directory
     bool "MOESI CMP directory"
     default n
+config RUBY_PROTOCOL_modified_MOESI
+    bool "Modified MOESI"
+    default n
 config RUBY_PROTOCOL_MOESI_CMP_token
     bool "MOESI CMP token"
     default n
