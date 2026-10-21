@@ -42,7 +42,7 @@ machine(MachineType:L1Cache, "L1 cache protocol")
  : Sequencer * sequencer;
    CacheMemory * L1Icache;
    CacheMemory * L1Dcache;
-   RubyPrefetcher * prefetcher;
+   prefetch::Base * prefetcher;
    Cycles request_latency := 1;
    Cycles response_latency := 1;
    Cycles use_timeout_latency := 50;
@@ -70,6 +70,7 @@ machine(MachineType:L1Cache, "L1 cache protocol")
    MessageBuffer * mandatoryQueue;
    MessageBuffer * optionalQueue;
 {
+  RubyPrefetcherProxy pfProxy, constructor="this, m_prefetcher_ptr, m_optionalQueue_ptr";
   // STATES
   state_declaration(State, desc="Cache states", default="L1Cache_State_I") {
     // Base states
@@ -133,6 +134,8 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     State CacheState,        desc="cache state";
     bool Dirty,              desc="Is the data dirty (different than memory)?";
     DataBlock DataBlk,       desc="data for the block";
+    bool isPrefetched, default="false", desc="Was this block prefetched?";
+    RequestorID requestor,   desc="Requestor ID";
   }
 
   // TBE fields
@@ -142,6 +145,8 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     DataBlock DataBlk,       desc="data for the block, required for concurrent writebacks";
     bool Dirty,              desc="Is the data dirty (different than memory)?";
     int NumPendingMsgs, default="0",     desc="Number of acks/data messages that this processor is waiting for";
+    bool is_local_pf, default="false", desc="Is local prefetch";
+    RequestPtr seqReq,       desc="Sequencer request pointer";
   }
 
   structure(TBETable, external ="yes") {
@@ -344,10 +349,43 @@ machine(MachineType:L1Cache, "L1 cache protocol")
   in_port(optionalQueue_in, RubyRequest, optionalQueue, rank=3) {
     if (optionalQueue_in.isReady(clockEdge())) {
       peek(optionalQueue_in, RubyRequest) {
-        trigger(prefetch_request_type_to_event(in_msg.Type),
-                in_msg.LineAddress,
-                getCacheEntry(in_msg.LineAddress),
-                TBEs[in_msg.LineAddress]);
+        if (in_msg.Type == RubyRequestType:IFETCH) {
+          Entry L1Icache_entry := getL1ICacheEntry(in_msg.LineAddress);
+          if (is_valid(L1Icache_entry)) {
+            trigger(prefetch_request_type_to_event(in_msg.Type),
+                    in_msg.LineAddress, L1Icache_entry, TBEs[in_msg.LineAddress]);
+          } else {
+            Entry L1Dcache_entry := getL1DCacheEntry(in_msg.LineAddress);
+            if (is_valid(L1Dcache_entry)) {
+              trigger(Event:L1_Replacement, in_msg.LineAddress, L1Dcache_entry, TBEs[in_msg.LineAddress]);
+            }
+            if (L1Icache.cacheAvail(in_msg.LineAddress)) {
+              trigger(prefetch_request_type_to_event(in_msg.Type),
+                      in_msg.LineAddress, L1Icache_entry, TBEs[in_msg.LineAddress]);
+            } else {
+              Addr victim := L1Icache.cacheProbe(in_msg.LineAddress);
+              trigger(Event:L1_Replacement, victim, getL1ICacheEntry(victim), TBEs[victim]);
+            }
+          }
+        } else {
+          Entry L1Dcache_entry := getL1DCacheEntry(in_msg.LineAddress);
+          if (is_valid(L1Dcache_entry)) {
+            trigger(prefetch_request_type_to_event(in_msg.Type),
+                    in_msg.LineAddress, L1Dcache_entry, TBEs[in_msg.LineAddress]);
+          } else {
+            Entry L1Icache_entry := getL1ICacheEntry(in_msg.LineAddress);
+            if (is_valid(L1Icache_entry)) {
+              trigger(Event:L1_Replacement, in_msg.LineAddress, L1Icache_entry, TBEs[in_msg.LineAddress]);
+            }
+            if (L1Dcache.cacheAvail(in_msg.LineAddress)) {
+              trigger(prefetch_request_type_to_event(in_msg.Type),
+                      in_msg.LineAddress, L1Dcache_entry, TBEs[in_msg.LineAddress]);
+            } else {
+              Addr victim := L1Dcache.cacheProbe(in_msg.LineAddress);
+              trigger(Event:L1_Replacement, victim, getL1DCacheEntry(victim), TBEs[victim]);
+            }
+          }
+        }
       }
     }
   }
@@ -502,10 +540,56 @@ machine(MachineType:L1Cache, "L1 cache protocol")
       }
   }
 
+  void regProbePoints() {
+    pfProxy.regProbePoints();
+  }
+
+  bool inCache(Addr addr, bool is_secure) {
+    Entry entry := getCacheEntry(makeLineAddress(addr));
+    if ((is_valid(entry) == false) || (entry.CacheState == State:I)) {
+      return false;
+    } else {
+      return true;
+    }
+  }
+
+  bool hasBeenPrefetched(Addr addr, bool is_secure, RequestorID requestor) {
+    Entry entry := getCacheEntry(makeLineAddress(addr));
+    if (is_valid(entry)) {
+      return entry.isPrefetched && (entry.requestor == requestor);
+    } else {
+      return false;
+    }
+  }
+
+  bool hasBeenPrefetched(Addr addr, bool is_secure) {
+    Entry entry := getCacheEntry(makeLineAddress(addr));
+    if (is_valid(entry)) {
+      return entry.isPrefetched;
+    } else {
+      return false;
+    }
+  }
+
+  bool inMissQueue(Addr addr, bool is_secure) {
+    Addr line_addr := makeLineAddress(addr);
+    TBE tbe := TBEs[line_addr];
+    return is_valid(tbe);
+  }
+
+  bool coalesce() {
+    return false;
+  }
+
   // ACTIONS
 
   action(a_issueGETS, "a", desc="Issue GETS") {
     peek(mandatoryQueue_in, RubyRequest) {
+      assert(is_valid(cache_entry));
+      if (is_valid(tbe)) {
+        tbe.seqReq := in_msg.getRequestPtr();
+      }
+      pfProxy.notifyPfMiss(in_msg.getRequestPtr(), true, cache_entry.DataBlk);
       enqueue(requestNetwork_out, RequestMsg,  request_latency) {
         out_msg.addr := address;
         out_msg.Type := CoherenceRequestType:GETS;
@@ -522,6 +606,11 @@ machine(MachineType:L1Cache, "L1 cache protocol")
 
   action(b_issueGETX, "b", desc="Issue GETX") {
     peek(mandatoryQueue_in, RubyRequest) {
+      assert(is_valid(cache_entry));
+      if (is_valid(tbe)) {
+        tbe.seqReq := in_msg.getRequestPtr();
+      }
+      pfProxy.notifyPfMiss(in_msg.getRequestPtr(), false, cache_entry.DataBlk);
       enqueue(requestNetwork_out, RequestMsg, request_latency) {
         out_msg.addr := address;
         out_msg.Type := CoherenceRequestType:GETX;
@@ -541,8 +630,15 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     optionalQueue_in.dequeue(clockEdge());
   }
 
+  action(pc_completeRedundantPf, "pc", desc="Complete redundant prefetch") {
+    pfProxy.completePrefetch(address);
+  }
+
   action(pa_issuePfGETS, "pa", desc="Issue prefetch GETS") {
     peek(optionalQueue_in, RubyRequest) {
+      assert(is_valid(tbe));
+      tbe.is_local_pf := true;
+      tbe.seqReq := in_msg.getRequestPtr();
       enqueue(requestNetwork_out, RequestMsg, request_latency) {
         out_msg.addr := address;
         out_msg.Type := CoherenceRequestType:GETS;
@@ -559,6 +655,9 @@ machine(MachineType:L1Cache, "L1 cache protocol")
 
   action(pb_issuePfGETX, "pb", desc="Issue prefetch GETX") {
     peek(optionalQueue_in, RubyRequest) {
+      assert(is_valid(tbe));
+      tbe.is_local_pf := true;
+      tbe.seqReq := in_msg.getRequestPtr();
       enqueue(requestNetwork_out, RequestMsg, request_latency) {
         out_msg.addr := address;
         out_msg.Type := CoherenceRequestType:GETX;
@@ -737,6 +836,10 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     assert(is_valid(cache_entry));
     DPRINTF(RubySlicc, "%s\n", cache_entry.DataBlk);
     L1Dcache.setMRU(cache_entry);
+    peek(mandatoryQueue_in, RubyRequest) {
+      pfProxy.notifyPfHit(in_msg.getRequestPtr(), true, cache_entry.DataBlk);
+    }
+    cache_entry.isPrefetched := false;
     sequencer.readCallback(address, cache_entry.DataBlk);
   }
 
@@ -744,6 +847,10 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     assert(is_valid(cache_entry));
     DPRINTF(RubySlicc, "%s\n", cache_entry.DataBlk);
     L1Icache.setMRU(cache_entry);
+    peek(mandatoryQueue_in, RubyRequest) {
+      pfProxy.notifyPfHit(in_msg.getRequestPtr(), true, cache_entry.DataBlk);
+    }
+    cache_entry.isPrefetched := false;
     sequencer.readCallback(address, cache_entry.DataBlk);
   }
 
@@ -752,13 +859,25 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     DPRINTF(RubySlicc, "%s\n", cache_entry.DataBlk);
     L1Icache.setMRU(address);
     L1Dcache.setMRU(address);
-    sequencer.readCallback(address, cache_entry.DataBlk, true);
+    if (is_valid(tbe) && tbe.is_local_pf) {
+      pfProxy.notifyPfFill(tbe.seqReq, cache_entry.DataBlk, true);
+      pfProxy.completePrefetch(address);
+    } else {
+      if (is_valid(tbe)) {
+        pfProxy.notifyPfFill(tbe.seqReq, cache_entry.DataBlk, false);
+      }
+      sequencer.readCallback(address, cache_entry.DataBlk, true);
+    }
   }
 
   action(hh_store_hit, "\h", desc="Notify sequencer that store completed.") {
     assert(is_valid(cache_entry));
     DPRINTF(RubySlicc, "%s\n", cache_entry.DataBlk);
     L1Dcache.setMRU(cache_entry);
+    peek(mandatoryQueue_in, RubyRequest) {
+      pfProxy.notifyPfHit(in_msg.getRequestPtr(), false, cache_entry.DataBlk);
+    }
+    cache_entry.isPrefetched := false;
     sequencer.writeCallback(address, cache_entry.DataBlk);
     cache_entry.Dirty := true;
   }
@@ -768,8 +887,16 @@ machine(MachineType:L1Cache, "L1 cache protocol")
     DPRINTF(RubySlicc, "%s\n", cache_entry.DataBlk);
     L1Icache.setMRU(address);
     L1Dcache.setMRU(address);
-    sequencer.writeCallback(address, cache_entry.DataBlk, true);
-    cache_entry.Dirty := true;
+    if (is_valid(tbe) && tbe.is_local_pf) {
+      pfProxy.notifyPfFill(tbe.seqReq, cache_entry.DataBlk, true);
+      pfProxy.completePrefetch(address);
+    } else {
+      if (is_valid(tbe)) {
+        pfProxy.notifyPfFill(tbe.seqReq, cache_entry.DataBlk, false);
+      }
+      sequencer.writeCallback(address, cache_entry.DataBlk, true);
+      cache_entry.Dirty := true;
+    }
   }
 
   action(i_allocateTBE, "i", desc="Allocate TBE") {
@@ -945,14 +1072,17 @@ machine(MachineType:L1Cache, "L1 cache protocol")
       assert(is_valid(cache_entry));
       cache_entry.DataBlk := in_msg.DataBlk;
       cache_entry.Dirty := in_msg.Dirty;
-
-      if (in_msg.Type == CoherenceResponseType:DATA) {
-        //assert(in_msg.Dirty == false);
+      if (is_valid(tbe)) {
+        cache_entry.isPrefetched := tbe.is_local_pf;
+        cache_entry.requestor := getRequestorID(tbe.seqReq);
       }
     }
   }
 
   action(kk_deallocateL1CacheBlock, "\k", desc="Deallocate cache block.  Sets the cache to invalid, allowing a replacement in parallel with a fetch.") {
+    if (is_valid(cache_entry)) {
+      pfProxy.notifyPfEvict(address, cache_entry.isPrefetched, cache_entry.requestor);
+    }
     if (L1Dcache.isTagPresent(address)) {
       L1Dcache.deallocate(address);
     } else {
@@ -1023,6 +1153,12 @@ machine(MachineType:L1Cache, "L1 cache protocol")
 
   transition({IM, IS, OI, MI, SI, II}, {Load, Ifetch}) {
     zz_recycleMandatoryQueue;
+  }
+
+  // Drop redundant prefetches in non-Idle states and clean up issuedPfPkts
+  transition({S, O, M, MM, M_W, MM_W, IM, SM, OM, IS, OI, SI, MI, II}, {PF_Load, PF_Ifetch, PF_Store}) {
+    pc_completeRedundantPf;
+    pq_popPrefetchQueue;
   }
 
   // Transitions from Idle
