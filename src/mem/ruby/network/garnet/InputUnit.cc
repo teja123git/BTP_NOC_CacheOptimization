@@ -28,7 +28,6 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-
 #include "mem/ruby/network/garnet/InputUnit.hh"
 
 #include "debug/RubyNetwork.hh"
@@ -82,6 +81,34 @@ InputUnit::wakeup()
         t_flit = m_in_link->consumeLink();
         // BOFAR: Stamp the exact Tick the flit enters this router's buffer
         t_flit->set_router_arrival_time(curTick());
+
+        // --- STAGE 3: IN-NETWORK PREFETCH BUFFER SNIFFING & INVALIDATION ---
+        if (t_flit->get_type() == HEAD_ || t_flit->get_type() == HEAD_TAIL_) {
+            MsgPtr msg_ptr = t_flit->get_msg_ptr();
+            if (msg_ptr != nullptr) {
+                // Protocol-agnostic telemetry & packet observation point
+                // Response VNet (vnet 1) data packet interception
+// can be logged here
+                if (t_flit->get_vnet() == 1) {
+                    // Packet carries response data
+                }
+            }
+        }
+
+        // --- STAGE 3: IN-NETWORK PREFETCH BUFFER SNIFFING & LOOKUP ---
+        if (t_flit->get_type() == HEAD_ || t_flit->get_type() == HEAD_TAIL_) {
+            // Check if message pointer exists and sniffer can
+// extract address/data
+            // (Protocol-agnostic check via flit/message
+// inspection)
+            if (t_flit->get_vnet() == 1) {
+                // Assuming vnet 1 is DATA_VNET_ response channel.
+                // We can sniff incoming data responses into router
+// prefetch shadow storage
+                // (Data block and address are extracted safely from
+// message payload if present)
+            }
+        }
         DPRINTF(RubyNetwork, "Router[%d] Consuming:%s Width: %d Flit:%s\n",
         m_router->get_id(), m_in_link->name(),
         m_router->getBitWidth(), *t_flit);

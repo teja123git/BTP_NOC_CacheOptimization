@@ -254,6 +254,24 @@ Router::regStats()
 {
     BasicRouter::regStats();
 
+    shadow_buf_fills
+        .name(name() + ".shadow_buf_fills")
+        .desc("Prefetched lines allocated")
+        .flags(statistics::nozero);
+    shadow_buf_hits
+        .name(name() + ".shadow_buf_hits")
+        .desc("Hits in shadow buffer")
+        .flags(statistics::nozero);
+    shadow_buf_evictions
+        .name(name() + ".shadow_buf_evictions")
+        .desc("Prefetch drops")
+        .flags(statistics::nozero);
+    adaptive_gate_blocks
+        .name(name() + ".adaptive_gate_blocks")
+        .desc("Buffer allocations denied")
+        .flags(statistics::nozero);
+
+
     m_buffer_reads
         .name(name() + ".buffer_reads")
         .flags(statistics::nozero)
@@ -276,6 +294,26 @@ Router::regStats()
 
     m_sw_output_arbiter_activity
         .name(name() + ".sw_output_arbiter_activity")
+        .flags(statistics::nozero)
+    ;
+
+    m_router_pf_inserts
+        .name(name() + ".router_pf_inserts")
+        .flags(statistics::nozero)
+    ;
+
+    m_router_pf_hits
+        .name(name() + ".router_pf_hits")
+        .flags(statistics::nozero)
+    ;
+
+    m_router_pf_invalidations
+        .name(name() + ".router_pf_invalidations")
+        .flags(statistics::nozero)
+    ;
+
+    m_router_pf_expired
+        .name(name() + ".router_pf_expired")
         .flags(statistics::nozero)
     ;
 }
@@ -369,6 +407,132 @@ Router::functionalWrite(Packet *pkt)
     }
 
     return num_functional_writes;
+}
+
+double
+Router::getBufferOccupancy()
+{
+    if (m_output_unit.empty() || m_num_vcs == 0) {
+        return 0.0;
+    }
+    int total_free_credits = 0;
+    int max_possible_credits = 0;
+    for (uint32_t i = 0; i < m_output_unit.size(); i++) {
+        for (uint32_t vc = 0; vc < m_num_vcs; vc++) {
+            total_free_credits += m_output_unit[i]->get_credit_count(vc);
+            // Conservative baseline per-VC credit depth.
+            max_possible_credits += 4;
+        }
+    }
+    if (max_possible_credits <= 0) {
+        return 0.0;
+    }
+    double free_ratio = static_cast<double>(total_free_credits) /
+                        static_cast<double>(max_possible_credits);
+    if (free_ratio > 1.0) free_ratio = 1.0;
+    if (free_ratio < 0.0) free_ratio = 0.0;
+    return 1.0 - free_ratio;
+}
+
+void
+Router::insertRouterPrefetch(Addr addr, const DataBlock &data)
+{
+    // Gate insertion if router is experiencing high congestion
+    if (getBufferOccupancy() >= 0.50) {
+        return;
+    }
+
+    Addr line_addr = makeLineAddress(addr, 6);
+    Tick now = curTick();
+
+    // 1. Check if line already exists in buffer; if so, refresh it
+    for (auto &entry : m_router_prefetch_buffer) {
+        if (entry.is_valid && entry.line_addr == line_addr) {
+            entry.data_blk = data;
+            entry.insertion_tick = now;
+            return;
+        }
+    }
+
+    // 2. Reclaim any expired or invalid slot first
+    for (auto &entry : m_router_prefetch_buffer) {
+        if (entry.is_valid &&
+            (now - entry.insertion_tick > MAX_PF_TTL_TICKS)) {
+            entry.is_valid = false;
+            m_router_pf_expired++;
+        }
+        if (!entry.is_valid) {
+            entry.line_addr = line_addr;
+            entry.data_blk = data;
+            entry.is_valid = true;
+            entry.insertion_tick = now;
+            m_router_pf_inserts++;
+            return;
+        }
+    }
+
+    // 3. Grow vector if below capacity
+    if (m_router_prefetch_buffer.size() < MAX_ROUTER_PF_ENTRIES) {
+        PrefetchBufferEntry new_entry;
+        new_entry.line_addr = line_addr;
+        new_entry.data_blk = data;
+        new_entry.is_valid = true;
+        new_entry.insertion_tick = now;
+        m_router_prefetch_buffer.push_back(new_entry);
+        m_router_pf_inserts++;
+        return;
+    }
+
+    // 4. True FIFO replacement: evict the entry with the oldest insertion_tick
+    size_t oldest_idx = 0;
+    Tick oldest_tick = m_router_prefetch_buffer[0].insertion_tick;
+    for (size_t i = 1; i < m_router_prefetch_buffer.size(); i++) {
+        if (m_router_prefetch_buffer[i].insertion_tick < oldest_tick) {
+            oldest_tick = m_router_prefetch_buffer[i].insertion_tick;
+            oldest_idx = i;
+        }
+    }
+
+    m_router_prefetch_buffer[oldest_idx].line_addr = line_addr;
+    m_router_prefetch_buffer[oldest_idx].data_blk = data;
+    m_router_prefetch_buffer[oldest_idx].is_valid = true;
+    m_router_prefetch_buffer[oldest_idx].insertion_tick = now;
+    m_router_pf_inserts++;
+}
+
+bool
+Router::lookupRouterPrefetch(Addr addr, DataBlock &data)
+{
+    Addr line_addr = makeLineAddress(addr, 6);
+    Tick now = curTick();
+
+    for (auto &entry : m_router_prefetch_buffer) {
+        if (entry.is_valid) {
+            if (now - entry.insertion_tick > MAX_PF_TTL_TICKS) {
+                entry.is_valid = false;
+                m_router_pf_expired++;
+                continue;
+            }
+            if (entry.line_addr == line_addr) {
+                data = entry.data_blk;
+                m_router_pf_hits++;
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+void
+Router::invalidateRouterPrefetch(Addr addr)
+{
+    Addr line_addr = makeLineAddress(addr, 6);
+    for (auto &entry : m_router_prefetch_buffer) {
+        if (entry.is_valid && entry.line_addr == line_addr) {
+            entry.is_valid = false;
+            m_router_pf_invalidations++;
+        }
+    }
 }
 
 } // namespace garnet

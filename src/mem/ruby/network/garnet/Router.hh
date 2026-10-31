@@ -66,6 +66,10 @@ class OutputUnit;
 class Router : public BasicRouter, public Consumer
 {
   public:
+    double getBufferOccupancy();
+    void insertRouterPrefetch(Addr addr, const DataBlock &data);
+    bool lookupRouterPrefetch(Addr addr, DataBlock &data);
+    void invalidateRouterPrefetch(Addr addr);
     typedef GarnetRouterParams Params;
     Router(const Params &p);
 
@@ -118,7 +122,7 @@ class Router : public BasicRouter, public Consumer
 
     // // BOFAR Helper to get total outports
     // int get_num_outports() { return m_output_unit.size(); }
-    
+
     // BOFAR: Add CSB to the counter (capped at 8-bits / 255)
     void update_BOC(int outport, int csb) {
         m_port_BOC[outport] += csb;
@@ -128,7 +132,7 @@ class Router : public BasicRouter, public Consumer
     // --- FON & NOP Helpers ---
     int get_fluidity(int outport) { return m_flits_departed[outport]; }
     void increment_fluidity(int outport) { m_flits_departed[outport]++; }
-    
+
     // // NOP needs to ask a neighbor for its free credits
     // int get_neighbor_free_credits(PortDirection dirn, int vnet) {
     //     if (m_routing_unit->getFreeCredits(dirn, vnet) > 0)
@@ -166,6 +170,10 @@ class Router : public BasicRouter, public Consumer
     uint32_t functionalWrite(Packet *);
 
   private:
+    statistics::Scalar m_router_pf_inserts;
+    statistics::Scalar m_router_pf_hits;
+    statistics::Scalar m_router_pf_invalidations;
+    statistics::Scalar m_router_pf_expired;
     Cycles m_latency;
     uint32_t m_virtual_networks, m_vc_per_vnet, m_num_vcs;
     uint32_t m_bit_width;
