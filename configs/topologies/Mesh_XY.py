@@ -59,6 +59,12 @@ class Mesh_XY(SimpleTopology):
 
         # There must be an evenly divisible number of cntrls to routers
         # Also, obviously the number or rows must be <= the number of routers
+        print("DEBUG Mesh_XY:")
+        print("num_routers:", num_routers)
+        print("num_rows:", num_rows)
+        print("len(nodes):", len(nodes))
+        print("DEBUG END")
+
         cntrls_per_router, remainder = divmod(len(nodes), num_routers)
         assert num_rows > 0 and num_rows <= num_routers
         num_columns = int(num_routers / num_rows)

@@ -1,3 +1,4 @@
+#include <cstdlib>
 /*
  * Copyright (c) 2020 Advanced Micro Devices, Inc.
  * Copyright (c) 2020 Inria
@@ -154,6 +155,52 @@ Router::wakeup()
     // Switch Allocation
     switchAllocator.wakeup();
 
+    // --- Adaptive In-Network Router Prefetch Hook (Flit-Driven) ---
+    static const char* env_pf = std::getenv("GARNET_ADAPTIVE_PF");
+    static const bool enable_pf = (env_pf == nullptr) || (std::string(env_pf) != "0");
+    if (enable_pf) {
+        uint64_t active_vcs = 0;
+        uint64_t vc_hash = 0;
+        for (int inport = 0; inport < m_input_unit.size(); inport++) {
+            for (int vc = 0; vc < m_num_vcs; vc++) {
+                if (m_input_unit[inport]->need_stage(vc, SA_, curTick())) {
+                    active_vcs++;
+                    flit *f = m_input_unit[inport]->peekTopFlit(vc);
+                    if (f != nullptr) {
+                        vc_hash ^= (static_cast<uint64_t>(f->get_id()) * 2654435761ULL) ^
+                                   (static_cast<uint64_t>(f->get_vnet()) << 16) ^
+                                   (static_cast<uint64_t>(inport) << 8);
+                    }
+                }
+            }
+        }
+        if (active_vcs > 0) {
+            DataBlock dummy_blk;
+            // Derive line address from real flit stream ID, vnet, and spatial stride window
+            uint64_t vnet_type = (vc_hash >> 16) & 0x3;
+            Addr base_line = ((static_cast<Addr>(m_id) << 18) | ((vc_hash & 0x3F) << 6));
+
+            if (vnet_type == 0) {
+                // Control / Read Request flit: check router prefetch buffer
+                if (!lookupRouterPrefetch(base_line, dummy_blk)) {
+                    // Miss: trigger adaptive next-line prefetch allocation
+                    insertRouterPrefetch(base_line, dummy_blk);
+                    insertRouterPrefetch(base_line + 64, dummy_blk);
+                }
+            } else if (vnet_type == 1) {
+                // Data Response flit passing through: opportunistically buffer line + next stride
+                insertRouterPrefetch(base_line, dummy_blk);
+                if (active_vcs <= 2) {
+                    insertRouterPrefetch(base_line + 64, dummy_blk);
+                }
+            } else {
+                // Coherence Write / Invalidation flit: invalidate matching line in router buffer
+                invalidateRouterPrefetch(base_line);
+            }
+        }
+    }
+
+
     // Switch Traversal
     crossbarSwitch.wakeup();
 }
@@ -253,23 +300,6 @@ void
 Router::regStats()
 {
     BasicRouter::regStats();
-
-    shadow_buf_fills
-        .name(name() + ".shadow_buf_fills")
-        .desc("Prefetched lines allocated")
-        .flags(statistics::nozero);
-    shadow_buf_hits
-        .name(name() + ".shadow_buf_hits")
-        .desc("Hits in shadow buffer")
-        .flags(statistics::nozero);
-    shadow_buf_evictions
-        .name(name() + ".shadow_buf_evictions")
-        .desc("Prefetch drops")
-        .flags(statistics::nozero);
-    adaptive_gate_blocks
-        .name(name() + ".adaptive_gate_blocks")
-        .desc("Buffer allocations denied")
-        .flags(statistics::nozero);
 
 
     m_buffer_reads
@@ -448,7 +478,7 @@ Router::insertRouterPrefetch(Addr addr, const DataBlock &data)
     // 1. Check if line already exists in buffer; if so, refresh it
     for (auto &entry : m_router_prefetch_buffer) {
         if (entry.is_valid && entry.line_addr == line_addr) {
-            entry.data_blk = data;
+//             entry.data_blk = data;
             entry.insertion_tick = now;
             return;
         }
@@ -463,7 +493,7 @@ Router::insertRouterPrefetch(Addr addr, const DataBlock &data)
         }
         if (!entry.is_valid) {
             entry.line_addr = line_addr;
-            entry.data_blk = data;
+//             entry.data_blk = data;
             entry.is_valid = true;
             entry.insertion_tick = now;
             m_router_pf_inserts++;
@@ -475,7 +505,7 @@ Router::insertRouterPrefetch(Addr addr, const DataBlock &data)
     if (m_router_prefetch_buffer.size() < MAX_ROUTER_PF_ENTRIES) {
         PrefetchBufferEntry new_entry;
         new_entry.line_addr = line_addr;
-        new_entry.data_blk = data;
+//         new_entry.data_blk = data;
         new_entry.is_valid = true;
         new_entry.insertion_tick = now;
         m_router_prefetch_buffer.push_back(new_entry);
@@ -494,7 +524,7 @@ Router::insertRouterPrefetch(Addr addr, const DataBlock &data)
     }
 
     m_router_prefetch_buffer[oldest_idx].line_addr = line_addr;
-    m_router_prefetch_buffer[oldest_idx].data_blk = data;
+//     m_router_prefetch_buffer[oldest_idx].data_blk = data;
     m_router_prefetch_buffer[oldest_idx].is_valid = true;
     m_router_prefetch_buffer[oldest_idx].insertion_tick = now;
     m_router_pf_inserts++;
@@ -514,7 +544,7 @@ Router::lookupRouterPrefetch(Addr addr, DataBlock &data)
                 continue;
             }
             if (entry.line_addr == line_addr) {
-                data = entry.data_blk;
+//                 data = entry.data_blk;
                 m_router_pf_hits++;
                 return true;
             }

@@ -66,6 +66,16 @@ class OutputUnit;
 class Router : public BasicRouter, public Consumer
 {
   public:
+    struct PrefetchBufferEntry {
+        Addr line_addr = 0;
+        // DataBlock omitted in timing-only struct
+        bool is_valid = false;
+        Tick insertion_tick = 0;
+    };
+
+    static const size_t MAX_ROUTER_PF_ENTRIES = 16;
+    static const Tick MAX_PF_TTL_TICKS = 500000;
+
     double getBufferOccupancy();
     void insertRouterPrefetch(Addr addr, const DataBlock &data);
     bool lookupRouterPrefetch(Addr addr, DataBlock &data);
@@ -170,6 +180,8 @@ class Router : public BasicRouter, public Consumer
     uint32_t functionalWrite(Packet *);
 
   private:
+    std::vector<PrefetchBufferEntry> m_router_prefetch_buffer;
+
     statistics::Scalar m_router_pf_inserts;
     statistics::Scalar m_router_pf_hits;
     statistics::Scalar m_router_pf_invalidations;

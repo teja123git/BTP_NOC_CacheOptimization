@@ -104,12 +104,3 @@ repos:
             exclude: .*
             language: system
             description: Run git-clang-format on the commit.
-          - id: gem5-commit-msg-checker
-            name: gem5 commit msg checker
-            entry: util/git-commit-msg.py
-            language: system
-            stages: [commit-msg]
-            description: The gem5 commit message checker hook.
-
-ci:
-    autoupdate_branch: develop
